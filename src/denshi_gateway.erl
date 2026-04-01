@@ -380,7 +380,11 @@ open_websocket(Url) ->
         gun:open(binary_to_list(Host), Port, #{
             protocols => [http],
             transport => tls,
-            tls_opts => [{verify, verify_peer}, {cacerts, public_key:cacerts_get()}]
+            tls_opts => [
+                {verify, verify_peer},
+                {cacerts, public_key:cacerts_get()},
+                {alpn_advertised_protocols, [<<"http/1.1">>]}
+            ]
         })
     of
         {ok, GunPid} ->

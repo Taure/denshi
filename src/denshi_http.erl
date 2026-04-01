@@ -18,7 +18,7 @@ request(Method, Path, Headers, Body, Token) ->
 request(Method, Path, ExtraHeaders, Body, Token, Timeout) ->
     Host = ~"discord.com",
     Port = 443,
-    case gun:open(binary_to_list(Host), Port, #{protocols => [http], transport => tls}) of
+    case gun:open(binary_to_list(Host), Port, #{protocols => [http2], transport => tls}) of
         {ok, ConnPid} ->
             MonRef = monitor(process, ConnPid),
             try
@@ -49,7 +49,7 @@ do_request(ConnPid, MonRef, Method, Path, ExtraHeaders, Body, Token, Timeout) ->
     StreamRef =
         case Body of
             undefined ->
-                gun:headers(ConnPid, method_to_binary(Method), FullPath, Headers);
+                gun:request(ConnPid, method_to_binary(Method), FullPath, Headers, <<>>);
             _ ->
                 gun:request(ConnPid, method_to_binary(Method), FullPath, Headers, Body)
         end,
