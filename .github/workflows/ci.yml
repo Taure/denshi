@@ -14,8 +14,8 @@ jobs:
       pull-requests: write
     with:
       enable-audit: false
-      enable-sbom: true
-      enable-sbom-scan: true
+      enable-sbom: false
+      enable-sbom-scan: false
       enable-dependency-submission: true
       enable-summary: true
       enable-coverage: true
