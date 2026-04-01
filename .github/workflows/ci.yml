@@ -16,7 +16,7 @@ jobs:
       enable-audit: false
       enable-sbom: false
       enable-sbom-scan: false
-      enable-dependency-submission: true
+      enable-dependency-submission: false
       enable-summary: true
       enable-coverage: true
     secrets: inherit
