@@ -1,0 +1,17 @@
+name: Erlang CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  ci:
+    uses: Taure/erlang-ci/.github/workflows/ci.yml@v2
+    with:
+      audit: false
+      sbom: true
+      sbom-scan: true
+      dep-submission: true
+      summary: true
