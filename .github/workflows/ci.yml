@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: Taure/erlang-ci/.github/workflows/ci.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      enable-audit: false
+      enable-sbom: false
+      enable-sbom-scan: false
+      enable-dependency-submission: false
+      enable-summary: true
+      enable-coverage: true
+    secrets: inherit

@@ -1,0 +1,21 @@
+{application, denshi, [
+    {description, "Discord API client library for Erlang/OTP"},
+    {vsn, git},
+    {registered, [
+        denshi_sup,
+        denshi_gateway_sup,
+        denshi_ratelimit,
+        denshi_dispatcher
+    ]},
+    {mod, {denshi_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        ssl,
+        gun
+    ]},
+    {env, []},
+    {modules, []},
+    {licenses, ["MIT"]},
+    {links, [{"GitHub", "https://github.com/Taure/denshi"}]}
+]}.
