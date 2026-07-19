@@ -26,7 +26,9 @@ value(guild_message_polls) -> 1 bsl 24;
 value(direct_message_polls) -> 1 bsl 25.
 
 -spec combine([atom()] | non_neg_integer()) -> non_neg_integer().
-combine(Intents) when is_list(Intents) ->
-    lists:foldl(fun(Intent, Acc) -> Acc bor value(Intent) end, 0, Intents);
+combine([]) ->
+    0;
+combine([Intent | Rest]) ->
+    value(Intent) bor combine(Rest);
 combine(Bitmask) when is_integer(Bitmask) ->
     Bitmask.
