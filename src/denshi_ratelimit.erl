@@ -35,7 +35,7 @@ update(Method, Route, Headers) ->
 %% gen_server callbacks
 
 init([]) ->
-    _ = ets:new(?TAB, [named_table, public, set, {read_concurrency, true}]),
+    _ = ets:new(?TAB, [named_table, protected, set, {read_concurrency, true}]),
     schedule_global_reset(),
     {ok, #{global_count => 0}}.
 
@@ -80,7 +80,52 @@ schedule_global_reset() ->
     erlang:send_after(1000, self(), reset_global).
 
 bucket_key(Method, Route) ->
-    <<Method/binary, ":", Route/binary>>.
+    <<Method/binary, ":", (normalize_route(Route))/binary>>.
+
+%% Discord scopes rate limits per route template, keyed by the major parameter
+%% (channel, guild or webhook id); bucketing on the raw path matches no limit
+%% the API actually reports back.
+normalize_route(Route) ->
+    [Path | _Query] = binary:split(Route, ~"?"),
+    Segments = [Segment || Segment <- binary:split(Path, ~"/", [global]), Segment =/= <<>>],
+    iolist_to_binary([[~"/", Segment] || Segment <- template(Segments)]).
+
+template([~"channels", Id | Rest]) ->
+    [~"channels", major(Id) | placeholders(Rest)];
+template([~"guilds", Id | Rest]) ->
+    [~"guilds", major(Id) | placeholders(Rest)];
+template([~"applications", Id, ~"guilds", GuildId | Rest]) ->
+    [~"applications", major(Id), ~"guilds", major(GuildId) | placeholders(Rest)];
+template([~"webhooks", Id, _Token | Rest]) ->
+    [~"webhooks", major(Id), ~":token" | placeholders(Rest)];
+template([~"interactions", _Id, _Token | Rest]) ->
+    [~"interactions", ~":id", ~":token" | placeholders(Rest)];
+template(Segments) ->
+    placeholders(Segments).
+
+%% A major parameter is only kept verbatim when it is a real snowflake, so a
+%% malformed id cannot mint a permanent ETS key of attacker-chosen size.
+major(Id) ->
+    case is_snowflake(Id) of
+        true -> Id;
+        false -> ~":id"
+    end.
+
+placeholders(Segments) ->
+    [placeholder(Segment) || Segment <- Segments].
+
+placeholder(Segment) ->
+    case is_snowflake(Segment) of
+        true -> ~":id";
+        false -> Segment
+    end.
+
+is_snowflake(<<>>) -> false;
+is_snowflake(Segment) -> is_all_digits(Segment).
+
+is_all_digits(<<>>) -> true;
+is_all_digits(<<Digit, Rest/binary>>) when Digit >= $0, Digit =< $9 -> is_all_digits(Rest);
+is_all_digits(_) -> false.
 
 find_header(Name, Headers) ->
     case lists:keyfind(Name, 1, Headers) of
