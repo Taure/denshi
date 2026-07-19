@@ -3,6 +3,7 @@
 -export([name/1, parse/1]).
 
 -include("denshi.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -spec name(binary()) -> atom().
 name(~"READY") ->
@@ -74,7 +75,7 @@ name(Other) when is_binary(Other) ->
         binary_to_existing_atom(string:lowercase(Other))
     catch
         error:badarg ->
-            logger:warning(~"Unknown Discord event: ~ts", [Other]),
+            ?LOG_WARNING(#{event => unknown_discord_event, discord_event => Other}),
             unknown
     end.
 

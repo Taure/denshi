@@ -6,6 +6,7 @@
 -export([disconnected/3, connecting/3, connected/3, identified/3, resuming/3]).
 
 -include("denshi.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -record(data, {
     config :: map(),
@@ -63,7 +64,7 @@ disconnected(enter, _OldState, #data{reconnect_attempts = 0} = Data) ->
 disconnected(enter, _OldState, #data{reconnect_attempts = N} = Data) ->
     Delay = min(?MAX_RECONNECT_DELAY, (1 bsl min(N, 10)) * 100),
     Jitter = rand:uniform(max(1, Delay div 2)),
-    logger:info(~"Discord gateway: reconnecting in ~Bms (attempt ~B)", [Delay + Jitter, N]),
+    ?LOG_INFO(#{event => gateway_reconnect_scheduled, delay_ms => Delay + Jitter, attempt => N}),
     {keep_state, Data, [{state_timeout, Delay + Jitter, connect}]};
 disconnected(state_timeout, connect, Data) ->
     case resolve_gateway_url(Data) of
@@ -76,14 +77,14 @@ disconnected(state_timeout, connect, Data) ->
                         stream_ref = StreamRef
                     }};
                 {error, Reason} ->
-                    logger:error(~"Discord gateway: connection failed: ~p", [Reason]),
+                    ?LOG_ERROR(#{event => gateway_connect_failed, reason => Reason}),
                     N = Data1#data.reconnect_attempts,
                     {keep_state, Data1#data{reconnect_attempts = N + 1}, [
                         {state_timeout, 0, connect}
                     ]}
             end;
         {error, Reason} ->
-            logger:error(~"Discord gateway: failed to get gateway URL: ~p", [Reason]),
+            ?LOG_ERROR(#{event => gateway_url_resolve_failed, reason => Reason}),
             N = Data#data.reconnect_attempts,
             {keep_state, Data#data{reconnect_attempts = N + 1}, [{state_timeout, 0, connect}]}
     end;
@@ -101,14 +102,14 @@ connecting(
     {gun_upgrade, GunPid, StreamRef, [~"websocket"], _Headers},
     #data{gun_pid = GunPid, stream_ref = StreamRef} = Data
 ) ->
-    logger:debug(~"Discord gateway: WebSocket upgrade successful"),
+    ?LOG_DEBUG(#{event => gateway_websocket_upgraded}),
     {next_state, connected, Data};
 connecting(
     info,
     {gun_response, GunPid, StreamRef, _, Status, _Headers},
     #data{gun_pid = GunPid, stream_ref = StreamRef} = Data
 ) ->
-    logger:error(~"Discord gateway: upgrade failed with HTTP ~B", [Status]),
+    ?LOG_ERROR(#{event => gateway_upgrade_failed, status => Status}),
     close_connection(Data),
     N = Data#data.reconnect_attempts,
     {next_state, disconnected, Data#data{
@@ -122,7 +123,7 @@ connecting(
     {gun_error, GunPid, _StreamRef, Reason},
     #data{gun_pid = GunPid} = Data
 ) ->
-    logger:error(~"Discord gateway: gun error during upgrade: ~p", [Reason]),
+    ?LOG_ERROR(#{event => gateway_gun_error_during_upgrade, reason => Reason}),
     close_connection(Data),
     N = Data#data.reconnect_attempts,
     {next_state, disconnected, Data#data{
@@ -136,7 +137,7 @@ connecting(
     {'DOWN', GunRef, process, GunPid, Reason},
     #data{gun_pid = GunPid, gun_ref = GunRef} = Data
 ) ->
-    logger:error(~"Discord gateway: gun process down during upgrade: ~p", [Reason]),
+    ?LOG_ERROR(#{event => gateway_gun_down_during_upgrade, reason => Reason}),
     N = Data#data.reconnect_attempts,
     {next_state, disconnected, Data#data{
         gun_pid = undefined,
@@ -145,7 +146,7 @@ connecting(
         reconnect_attempts = N + 1
     }};
 connecting(state_timeout, upgrade_timeout, Data) ->
-    logger:error(~"Discord gateway: WebSocket upgrade timed out"),
+    ?LOG_ERROR(#{event => gateway_upgrade_timeout}),
     close_connection(Data),
     N = Data#data.reconnect_attempts,
     {next_state, disconnected, Data#data{
@@ -183,13 +184,15 @@ connected(
                     {next_state, resuming, Data#data{reconnect_attempts = 0}}
             end;
         _ ->
-            logger:warning(~"Discord gateway: unexpected op ~B in connected state", [
-                Event#denshi_event.op
-            ]),
+            ?LOG_WARNING(#{
+                event => gateway_unexpected_op,
+                op => Event#denshi_event.op,
+                state => connected
+            }),
             keep_state_and_data
     end;
 connected(state_timeout, hello_timeout, Data) ->
-    logger:error(~"Discord gateway: Hello timeout"),
+    ?LOG_ERROR(#{event => gateway_hello_timeout}),
     close_connection(Data),
     {next_state, disconnected, Data#data{
         gun_pid = undefined, gun_ref = undefined, stream_ref = undefined
@@ -212,7 +215,7 @@ identified(info, send_heartbeat, Data) ->
     send_heartbeat(Data),
     keep_state_and_data;
 identified(info, zombie_connection, Data) ->
-    logger:warning(~"Discord gateway: zombie connection detected, reconnecting"),
+    ?LOG_WARNING(#{event => gateway_zombie_connection}),
     close_connection(Data),
     {next_state, disconnected, Data#data{
         gun_pid = undefined, gun_ref = undefined, stream_ref = undefined
@@ -234,10 +237,10 @@ resuming(
     Event = denshi_event:parse(denshi_codec:decode(Frame)),
     case Event of
         #denshi_event{op = 0, name = resumed} ->
-            logger:info(~"Discord gateway: resumed successfully"),
+            ?LOG_INFO(#{event => gateway_resumed}),
             {next_state, identified, Data};
         #denshi_event{op = 9} ->
-            logger:warning(~"Discord gateway: invalid session during resume, re-identifying"),
+            ?LOG_WARNING(#{event => gateway_invalid_session_during_resume}),
             Session = Data#data.session,
             NewSession = Session#denshi_session{session_id = undefined, resume_url = undefined},
             send_identify(Data#data{session = NewSession}),
@@ -246,7 +249,7 @@ resuming(
             handle_gateway_event(Event, Data)
     end;
 resuming(state_timeout, resume_timeout, Data) ->
-    logger:warning(~"Discord gateway: resume timed out, re-identifying"),
+    ?LOG_WARNING(#{event => gateway_resume_timeout}),
     Session = Data#data.session,
     NewSession = Session#denshi_session{session_id = undefined, resume_url = undefined},
     send_identify(Data#data{session = NewSession}),
@@ -273,7 +276,7 @@ handle_gateway_event(#denshi_event{op = 0, name = Name, data = EventData, sequen
             ready ->
                 SessId = maps:get(~"session_id", EventData, undefined),
                 ResumeUrl = maps:get(~"resume_gateway_url", EventData, undefined),
-                logger:info(~"Discord gateway: READY (session: ~ts)", [SessId]),
+                ?LOG_INFO(#{event => gateway_ready, session_id => SessId}),
                 Data#data{
                     session = NewSession#denshi_session{
                         session_id = SessId,
@@ -289,7 +292,7 @@ handle_gateway_event(#denshi_event{op = 1}, Data) ->
     send_heartbeat(Data),
     keep_state_and_data;
 handle_gateway_event(#denshi_event{op = 7}, Data) ->
-    logger:info(~"Discord gateway: server requested reconnect"),
+    ?LOG_INFO(#{event => gateway_server_requested_reconnect}),
     close_connection(Data),
     {next_state, disconnected, Data#data{
         gun_pid = undefined, gun_ref = undefined, stream_ref = undefined
@@ -298,13 +301,13 @@ handle_gateway_event(#denshi_event{op = 9, data = Resumable}, Data) ->
     Session = Data#data.session,
     case Resumable of
         false ->
-            logger:warning(~"Discord gateway: invalid session (not resumable)"),
+            ?LOG_WARNING(#{event => gateway_invalid_session, resumable => false}),
             NewSession = Session#denshi_session{session_id = undefined, resume_url = undefined},
             timer:sleep(1000 + rand:uniform(4000)),
             send_identify(Data#data{session = NewSession}),
             {keep_state, Data#data{session = NewSession}};
         _ ->
-            logger:info(~"Discord gateway: invalid session (resumable)"),
+            ?LOG_INFO(#{event => gateway_invalid_session, resumable => true}),
             timer:sleep(1000 + rand:uniform(4000)),
             send_resume(Data),
             {next_state, resuming, Data}
@@ -313,7 +316,7 @@ handle_gateway_event(#denshi_event{op = 11}, _Data) ->
     denshi_heartbeat:ack(),
     keep_state_and_data;
 handle_gateway_event(#denshi_event{op = Op}, _Data) ->
-    logger:debug(~"Discord gateway: unhandled opcode ~B", [Op]),
+    ?LOG_DEBUG(#{event => gateway_unhandled_op, op => Op}),
     keep_state_and_data.
 
 handle_common_info(
@@ -321,7 +324,7 @@ handle_common_info(
     _StateName,
     #data{gun_pid = GunPid, gun_ref = GunRef} = Data
 ) ->
-    logger:error(~"Discord gateway: gun process down: ~p", [Reason]),
+    ?LOG_ERROR(#{event => gateway_gun_down, reason => Reason}),
     denshi_heartbeat:stop_beating(),
     {next_state, disconnected, Data#data{
         gun_pid = undefined, gun_ref = undefined, stream_ref = undefined
@@ -331,7 +334,7 @@ handle_common_info(
     _StateName,
     #data{gun_pid = GunPid} = Data
 ) ->
-    logger:warning(~"Discord gateway: WebSocket closed (~B): ~ts", [Code, Reason]),
+    ?LOG_WARNING(#{event => gateway_websocket_closed, code => Code, reason => Reason}),
     denshi_heartbeat:stop_beating(),
     close_connection(Data),
     {next_state, disconnected, Data#data{
@@ -342,7 +345,7 @@ handle_common_info(
     _StateName,
     #data{gun_pid = GunPid} = Data
 ) ->
-    logger:error(~"Discord gateway: gun error: ~p", [Reason]),
+    ?LOG_ERROR(#{event => gateway_gun_error, reason => Reason}),
     denshi_heartbeat:stop_beating(),
     close_connection(Data),
     {next_state, disconnected, Data#data{

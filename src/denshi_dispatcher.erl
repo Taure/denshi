@@ -4,6 +4,8 @@
 -export([start_link/1, dispatch/2, register_consumer/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -record(state, {
     consumers = #{} :: #{atom() => [{module(), term()}]}
 }).
@@ -79,9 +81,13 @@ dispatch_to_consumers(EventName, Data, [{Module, ConsumerState} | Rest], Acc) ->
             dispatch_to_consumers(EventName, Data, Rest, [{Module, NewState} | Acc])
     catch
         Class:Reason:Stacktrace ->
-            logger:error(
-                ~"Consumer ~s crashed handling ~s: ~p:~p~n~p",
-                [Module, EventName, Class, Reason, Stacktrace]
-            ),
+            ?LOG_ERROR(#{
+                event => consumer_crashed,
+                module => Module,
+                discord_event => EventName,
+                class => Class,
+                reason => Reason,
+                stacktrace => Stacktrace
+            }),
             dispatch_to_consumers(EventName, Data, Rest, [{Module, ConsumerState} | Acc])
     end.

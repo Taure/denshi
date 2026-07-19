@@ -4,6 +4,8 @@
 -export([start_link/0, start_beating/2, stop_beating/0, ack/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -record(state, {
     gateway_pid :: pid() | undefined,
     interval :: non_neg_integer() | undefined,
@@ -62,12 +64,12 @@ handle_cast(_Msg, State) ->
 handle_info(heartbeat, #state{ack_received = false, missed = Missed} = State) when
     Missed >= 2
 ->
-    logger:warning(~"Discord heartbeat: missed ~B ACKs, requesting reconnect", [Missed + 1]),
+    ?LOG_WARNING(#{event => heartbeat_acks_missed, missed => Missed + 1}),
     State#state.gateway_pid ! zombie_connection,
     cancel_timer(State),
     {noreply, State#state{timer_ref = undefined}};
 handle_info(heartbeat, #state{ack_received = false, missed = Missed} = State) ->
-    logger:debug(~"Discord heartbeat: missed ACK (~B), retrying", [Missed + 1]),
+    ?LOG_DEBUG(#{event => heartbeat_ack_missed, missed => Missed + 1}),
     State#state.gateway_pid ! send_heartbeat,
     TimerRef = erlang:send_after(State#state.interval, self(), heartbeat),
     {noreply, State#state{timer_ref = TimerRef, missed = Missed + 1}};
